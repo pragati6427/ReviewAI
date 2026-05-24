@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ReviewAI — Live GitHub PR Reviewer</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #ffffff;
+    --bg2: #f6f8fa;
+    --bg3: #eef1f4;
+    --border: #d0d7de;
+    --border2: #e4e8ec;
+    --text: #1a1f2e;
+    --text2: #57606a;
+    --text3: #8c949e;
+    --blue: #0969da;
+    --blue-bg: #ddf4ff;
+    --blue-border: #54aeff;
+    --green: #1a7f37;
+    --green-bg: #dafbe1;
+    --red: #cf222e;
+    --red-bg: #ffebe9;
+    --orange: #9a6700;
+    --orange-bg: #fff8c5;
+    --purple: #6639ba;
+    --purple-bg: #fbefff;
+    --purple-border: #d2a8ff;
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    --radius: 6px;
+  }
+
+  body { font-family: var(--font); background: var(--bg2); color: var(--text); font-size: 14px; min-height: 100vh; }
+
+  /* ── HEADER ── */
+  .header {
+    background: #24292f;
+    padding: 12px 24px;
+    display: flex; align-items: center; gap: 16px;
+    position: sticky; top: 0; z-index: 100;
+  }
+  .header-logo { display: flex; align-items: center; gap: 8px; color: #fff; font-weight: 600; font-size: 15px; text-decoration: none; }
+  .header-logo svg { fill: #fff; }
+  .header-divider { width: 1px; height: 20px; background: #444c56; }
+  .header-title { color: #cdd9e5; font-size: 14px; }
+  .header-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #3fb950; display: inline-block; }
+
+  /* ── LAYOUT ── */
+  .container { max-width: 1100px; margin: 0 auto; padding: 24px 20px; display: grid; grid-template-columns: 300px 1fr; gap: 20px; align-items: start; }
+
+  /* ── SIDEBAR ── */
+  .sidebar { display: flex; flex-direction: column; gap: 16px; }
+
+  .card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .card-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border2);
+    font-weight: 600; font-size: 13px;
+    background: var(--bg2);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .card-body { padding: 16px; }
+
+  .form-group { margin-bottom: 12px; }
+  .form-group:last-child { margin-bottom: 0; }
+  label { display: block; font-size: 12px; font-weight: 600; color: var(--text2); margin-bottom: 4px; }
+  input[type=text], input[type=password], select {
+    width: 100%; padding: 7px 10px; font-size: 13px;
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--bg); color: var(--text); font-family: var(--font);
+    outline: none; transition: border-color 0.15s;
+  }
+  input[type=text]:focus, input[type=password]:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(9,105,218,0.15); }
+  input[type=password] { font-family: var(--mono); letter-spacing: 0.1em; }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 7px 14px; font-size: 13px; font-weight: 500;
+    border-radius: var(--radius); cursor: pointer; border: 1px solid;
+    font-family: var(--font); transition: all 0.15s; text-decoration: none;
+  }
+  .btn-primary { background: #2da44e; border-color: #1a7f37; color: #fff; }
+  .btn-primary:hover { background: #2c974b; }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-default { background: var(--bg); border-color: var(--border); color: var(--text); }
+  .btn-default:hover { background: var(--bg2); }
+  .btn-blue { background: var(--blue); border-color: #0860ca; color: #fff; }
+  .btn-blue:hover { background: #0860ca; }
+  .btn-full { width: 100%; justify-content: center; }
+  .btn-sm { padding: 4px 10px; font-size: 12px; }
+  .btn-danger { background: var(--bg); border-color: var(--border); color: var(--red); }
+  .btn-danger:hover { background: var(--red-bg); border-color: var(--red); }
+
+  .pr-list { display: flex; flex-direction: column; }
+  .pr-list-item {
+    padding: 10px 14px; border-bottom: 1px solid var(--border2);
+    cursor: pointer; transition: background 0.1s;
+    display: flex; flex-direction: column; gap: 3px;
+  }
+  .pr-list-item:last-child { border-bottom: none; }
+  .pr-list-item:hover { background: var(--bg2); }
+  .pr-list-item.active { background: var(--blue-bg); border-left: 3px solid var(--blue); padding-left: 11px; }
+  .pr-list-title { font-size: 13px; font-weight: 500; color: var(--text); line-height: 1.3; }
+  .pr-list-meta { font-size: 11px; color: var(--text3); display: flex; gap: 8px; align-items: center; }
+  .pr-list-num { font-family: var(--mono); }
+
+  /* ── MAIN CONTENT ── */
+  .main { display: flex; flex-direction: column; gap: 16px; }
+
+  .empty-state {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 48px 24px;
+    text-align: center;
+    color: var(--text2);
+  }
+  .empty-state h2 { font-size: 16px; color: var(--text); margin-bottom: 8px; }
+  .empty-state p { font-size: 13px; line-height: 1.6; }
+
+  /* ── PR HEADER ── */
+  .pr-header {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+  }
+  .pr-header-top { display: flex; align-items: flex-start; gap: 12px; }
+  .pr-header-body { flex: 1; }
+  .pr-title { font-size: 18px; font-weight: 600; line-height: 1.3; margin-bottom: 6px; }
+  .pr-title span { color: var(--text3); font-weight: 400; }
+  .pr-badges { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 500;
+    border: 1px solid;
+  }
+  .badge-open { background: var(--green-bg); color: var(--green); border-color: #82e09a; }
+  .badge-merged { background: var(--purple-bg); color: var(--purple); border-color: var(--purple-border); }
+  .badge-closed { background: var(--bg2); color: var(--text2); border-color: var(--border); }
+  .pr-meta-row { font-size: 12px; color: var(--text2); display: flex; gap: 16px; flex-wrap: wrap; }
+  .pr-meta-row a { color: var(--blue); text-decoration: none; }
+  .pr-meta-row a:hover { text-decoration: underline; }
+  .diff-stat { display: flex; align-items: center; gap: 4px; }
+  .diff-add { color: var(--green); font-weight: 600; }
+  .diff-del { color: var(--red); font-weight: 600; }
+
+  /* ── REVIEW BUTTON ── */
+  .review-action {
+    display: flex; align-items: center; gap: 10px;
+    margin-top: 14px; padding-top: 14px;
+    border-top: 1px solid var(--border2);
+  }
+
+  /* ── PROGRESS ── */
+  .progress-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+  }
+  .progress-title { font-weight: 600; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+  .spinner {
+    width: 16px; height: 16px; border: 2px solid var(--border);
+    border-top-color: var(--blue); border-radius: 50%;
+    animation: spin 0.8s linear infinite; flex-shrink: 0;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .progress-steps { display: flex; flex-direction: column; gap: 8px; }
+  .step { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text3); }
+  .step.done { color: var(--green); }
+  .step.active { color: var(--text); font-weight: 500; }
+  .step-icon { width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; }
+  .step.done .step-icon { background: var(--green-bg); color: var(--green); }
+  .step.active .step-icon { background: var(--blue-bg); color: var(--blue); }
+  .step.pending .step-icon { background: var(--bg2); color: var(--text3); }
+  .step-label { flex: 1; }
+  .step-time { font-size: 11px; color: var(--text3); }
+  .stream-output {
+    margin-top: 14px; padding: 12px;
+    background: #0d1117; border-radius: var(--radius);
+    font-family: var(--mono); font-size: 12px; color: #3fb950;
+    min-height: 60px; max-height: 120px; overflow-y: auto;
+    line-height: 1.6; white-space: pre-wrap; word-break: break-all;
+  }
+
+  /* ── FINDINGS ── */
+  .findings-header {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius) var(--radius) 0 0;
+    padding: 12px 16px;
+    border-bottom: none;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .findings-title { font-weight: 600; flex: 1; }
+  .count-pill {
+    font-size: 12px; padding: 2px 8px; border-radius: 20px;
+    background: var(--bg2); border: 1px solid var(--border); color: var(--text2);
+  }
+  .count-pill.red { background: var(--red-bg); border-color: #ffb8b8; color: var(--red); }
+  .count-pill.orange { background: var(--orange-bg); border-color: #f0c040; color: var(--orange); }
+  .count-pill.blue { background: var(--blue-bg); border-color: var(--blue-border); color: var(--blue); }
+  .count-pill.green { background: var(--green-bg); border-color: #82e09a; color: var(--green); }
+
+  .finding {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-top: none;
+    overflow: hidden;
+  }
+  .finding:last-child { border-radius: 0 0 var(--radius) var(--radius); }
+
+  .finding-header {
+    padding: 12px 16px; cursor: pointer;
+    display: flex; align-items: flex-start; gap: 12px;
+    transition: background 0.1s;
+  }
+  .finding-header:hover { background: var(--bg2); }
+
+  .sev-icon {
+    width: 24px; height: 24px; border-radius: 4px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center; font-size: 13px;
+  }
+  .sev-critical { background: var(--red-bg); color: var(--red); }
+  .sev-high { background: var(--orange-bg); color: var(--orange); }
+  .sev-medium { background: var(--blue-bg); color: var(--blue); }
+  .sev-low { background: var(--bg2); color: var(--text2); }
+
+  .finding-info { flex: 1; min-width: 0; }
+  .finding-title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .finding-title { font-size: 13px; font-weight: 600; }
+  .finding-category {
+    font-size: 11px; padding: 1px 7px; border-radius: 20px;
+    border: 1px solid var(--border2); color: var(--text2); background: var(--bg2);
+  }
+  .finding-loc { font-size: 12px; color: var(--text3); font-family: var(--mono); margin-top: 2px; }
+  .finding-chevron { color: var(--text3); transition: transform 0.2s; font-size: 12px; margin-top: 4px; }
+  .finding.open .finding-chevron { transform: rotate(180deg); }
+
+  .finding-body {
+    display: none; padding: 14px 16px;
+    border-top: 1px solid var(--border2);
+    background: var(--bg);
+  }
+  .finding.open .finding-body { display: block; }
+
+  .finding-desc { font-size: 13px; color: var(--text); line-height: 1.6; margin-bottom: 12px; }
+
+  .code-diff {
+    border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden; margin-bottom: 10px;
+  }
+  .code-diff-header {
+    background: var(--bg2); padding: 6px 12px; font-size: 11px;
+    color: var(--text2); border-bottom: 1px solid var(--border2);
+    font-family: var(--mono);
+  }
+  .code-line {
+    display: flex; font-family: var(--mono); font-size: 12px; line-height: 1.7;
+  }
+  .code-line-num { width: 40px; text-align: right; padding: 0 8px; color: var(--text3); flex-shrink: 0; user-select: none; font-size: 11px; }
+  .code-line-content { flex: 1; padding: 0 12px; white-space: pre; overflow-x: auto; }
+  .code-del { background: #ffd7d5; }
+  .code-del .code-line-content { color: #82071e; }
+  .code-add { background: #ccffd8; }
+  .code-add .code-line-content { color: #033a16; }
+  .code-ctx .code-line-content { color: var(--text2); }
+
+  .finding-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+  /* ── POST TO GITHUB ── */
+  .post-section {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+  }
+  .post-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .post-title { font-weight: 600; }
+  .post-preview {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    font-size: 13px; color: var(--text2); line-height: 1.6;
+    font-family: var(--mono);
+    max-height: 200px; overflow-y: auto;
+    margin-bottom: 12px;
+    white-space: pre-wrap;
+  }
+  .post-actions { display: flex; gap: 8px; }
+
+  /* ── TOAST ── */
+  .toast {
+    position: fixed; bottom: 24px; right: 24px; z-index: 999;
+    padding: 12px 18px; border-radius: var(--radius);
+    font-size: 13px; font-weight: 500; color: #fff;
+    display: flex; align-items: center; gap: 8px;
+    transform: translateY(80px); opacity: 0;
+    transition: all 0.25s ease;
+    pointer-events: none;
+  }
+  .toast.show { transform: translateY(0); opacity: 1; }
+  .toast.success { background: #1a7f37; }
+  .toast.error { background: #cf222e; }
+  .toast.info { background: var(--blue); }
+
+  /* ── MISC ── */
+  .error-box {
+    background: var(--red-bg); border: 1px solid #ffb8b8; border-radius: var(--radius);
+    padding: 12px 14px; font-size: 13px; color: var(--red);
+  }
+  .info-box {
+    background: var(--blue-bg); border: 1px solid var(--blue-border); border-radius: var(--radius);
+    padding: 10px 14px; font-size: 12px; color: #0550ae; line-height: 1.5;
+  }
+  .info-box a { color: var(--blue); }
+  .section-label { font-size: 12px; font-weight: 600; color: var(--text2); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.04em; }
+  hr { border: none; border-top: 1px solid var(--border2); margin: 14px 0; }
+  .flex { display: flex; align-items: center; }
+  .gap-8 { gap: 8px; }
+  code { font-family: var(--mono); font-size: 12px; background: var(--bg2); padding: 1px 5px; border-radius: 3px; border: 1px solid var(--border2); }
+
+  .skeleton {
+    background: linear-gradient(90deg, var(--bg2) 25%, var(--bg3) 50%, var(--bg2) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.2s infinite;
+    border-radius: 4px; height: 14px; margin-bottom: 8px;
+  }
+  @keyframes shimmer { to { background-position: -200% 0; } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <a class="header-logo" href="#">
+    <svg width="20" height="20" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+    ReviewAI
+  </a>
+  <div class="header-divider"></div>
+  <span class="header-title">Live GitHub PR Reviewer</span>
+  <div class="header-right">
+    <span class="status-dot"></span>
+    <span style="color:#cdd9e5;font-size:13px;" id="header-status">Ready</span>
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+
+    <div class="card">
+      <div class="card-header">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        GitHub connection
+      </div>
+      <div class="card-body">
+        <div class="form-group">
+          <label>Personal access token</label>
+          <input type="password" id="github-token" placeholder="ghp_xxxxxxxxxxxx" autocomplete="off" />
+        </div>
+        <div class="info-box" style="margin-bottom:12px;">
+          Needs <code>repo</code> scope. <a href="https://github.com/settings/tokens/new?scopes=repo&description=ReviewAI" target="_blank">Create one here →</a>
+        </div>
+        <div class="form-group">
+          <label>Anthropic API key</label>
+          <input type="password" id="anthropic-key" placeholder="sk-ant-xxxxxxxxxxxx" autocomplete="off" />
+        </div>
+        <button class="btn btn-primary btn-full" id="connect-btn" onclick="connect()">Connect</button>
+      </div>
+    </div>
+
+    <div class="card" id="repo-card" style="display:none;">
+      <div class="card-header">Repository</div>
+      <div class="card-body">
+        <div class="form-group">
+          <label>Owner / repo</label>
+          <input type="text" id="repo-input" placeholder="e.g. vercel/next.js" />
+        </div>
+        <button class="btn btn-default btn-full" onclick="loadPRs()">
+          Load open PRs
+        </button>
+      </div>
+    </div>
+
+    <div class="card" id="pr-list-card" style="display:none;">
+      <div class="card-header">Open pull requests</div>
+      <div class="pr-list" id="pr-list"></div>
+    </div>
+
+  </div>
+
+  <!-- MAIN -->
+  <div class="main" id="main">
+    <div class="empty-state">
+      <svg width="40" height="40" viewBox="0 0 16 16" fill="#8c949e" style="margin-bottom:12px;"><path d="M7.177 3.073L9.573.677A.25.25 0 0110 .854v4.792a.25.25 0 01-.427.177L7.177 3.677a.25.25 0 010-.354zM3.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122v5.256a2.251 2.251 0 11-1.5 0V5.372A2.25 2.25 0 011.5 3.25zM11 2.5h-1V4h1a1 1 0 011 1v5.628a2.251 2.251 0 101.5 0V5A2.5 2.5 0 0011 2.5zm1 10.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0zM3.75 12a.75.75 0 100 1.5.75.75 0 000-1.5z"/></svg>
+      <h2>Connect to get started</h2>
+      <p>Enter your GitHub token and Anthropic API key,<br>then load PRs from any repository you have access to.</p>
+    </div>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let GH_TOKEN = '';
+let ANT_KEY = '';
+let currentPR = null;
+let currentRepo = '';
+
+function showToast(msg, type = 'info') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = `toast ${type} show`;
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+function setStatus(msg) {
+  document.getElementById('header-status').textContent = msg;
+}
+
+async function connect() {
+  GH_TOKEN = document.getElementById('github-token').value.trim();
+  ANT_KEY = document.getElementById('anthropic-key').value.trim();
+  if (!GH_TOKEN || !ANT_KEY) { showToast('Enter both keys first', 'error'); return; }
+
+  const btn = document.getElementById('connect-btn');
+  btn.disabled = true; btn.textContent = 'Verifying…';
+
+  try {
+    const res = await fetch('https://api.github.com/user', {
+      headers: { Authorization: `Bearer ${GH_TOKEN}`, Accept: 'application/vnd.github+json' }
+    });
+    if (!res.ok) throw new Error('GitHub token invalid or expired');
+    const user = await res.json();
+    btn.textContent = `Connected as @${user.login}`;
+    btn.style.background = '#1a7f37';
+    document.getElementById('repo-card').style.display = 'block';
+    setStatus(`@${user.login}`);
+    showToast(`Connected as @${user.login}`, 'success');
+  } catch(e) {
+    btn.disabled = false; btn.textContent = 'Connect';
+    showToast(e.message, 'error');
+  }
+}
+
+async function loadPRs() {
+  currentRepo = document.getElementById('repo-input').value.trim().replace(/^https?:\/\/github\.com\//, '');
+  if (!currentRepo || !currentRepo.includes('/')) { showToast('Enter owner/repo format', 'error'); return; }
+
+  const card = document.getElementById('pr-list-card');
+  const list = document.getElementById('pr-list');
+  list.innerHTML = `<div style="padding:16px;"><div class="skeleton" style="width:80%;"></div><div class="skeleton" style="width:60%;"></div><div class="skeleton" style="width:70%;"></div></div>`;
+  card.style.display = 'block';
+
+  try {
+    const res = await fetch(`https://api.github.com/repos/${currentRepo}/pulls?state=open&per_page=20`, {
+      headers: { Authorization: `Bearer ${GH_TOKEN}`, Accept: 'application/vnd.github+json' }
+    });
+    if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+    const prs = await res.json();
+    renderPRList(prs);
+  } catch(e) {
+    list.innerHTML = `<div class="card-body"><div class="error-box">${e.message}</div></div>`;
+  }
+}
+
+function renderPRList(prs) {
+  const list = document.getElementById('pr-list');
+  if (!prs.length) { list.innerHTML = '<div style="padding:14px;font-size:13px;color:#8c949e;">No open PRs found.</div>'; return; }
+  list.innerHTML = prs.map(pr => `
+    <div class="pr-list-item" onclick="selectPR(${pr.number})" id="pr-item-${pr.number}">
+      <div class="pr-list-title">${escHtml(pr.title)}</div>
+      <div class="pr-list-meta">
+        <span class="pr-list-num">#${pr.number}</span>
+        <span>by ${escHtml(pr.user.login)}</span>
+        <span>${timeAgo(pr.created_at)}</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function selectPR(num) {
+  document.querySelectorAll('.pr-list-item').forEach(el => el.classList.remove('active'));
+  const item = document.getElementById(`pr-item-${num}`);
+  if (item) item.classList.add('active');
+
+  const main = document.getElementById('main');
+  main.innerHTML = `<div class="card"><div class="card-body"><div class="skeleton" style="width:70%;height:20px;"></div><div class="skeleton" style="width:50%;"></div><div class="skeleton" style="width:90%;"></div></div></div>`;
+
+  try {
+    const [prRes, filesRes] = await Promise.all([
+      fetch(`https://api.github.com/repos/${currentRepo}/pulls/${num}`, { headers: ghHeaders() }),
+      fetch(`https://api.github.com/repos/${currentRepo}/pulls/${num}/files?per_page=30`, { headers: ghHeaders() })
+    ]);
+    const pr = await prRes.json();
+    const files = await filesRes.json();
+    currentPR = { ...pr, files };
+    renderPRHeader(pr, files);
+  } catch(e) {
+    main.innerHTML = `<div class="error-box">${e.message}</div>`;
+  }
+}
+
+function renderPRHeader(pr, files) {
+  const main = document.getElementById('main');
+  const state = pr.merged_at ? 'merged' : pr.state;
+  const stateBadge = state === 'open'
+    ? '<span class="badge badge-open">● Open</span>'
+    : state === 'merged'
+    ? '<span class="badge badge-merged">⬡ Merged</span>'
+    : '<span class="badge badge-closed">○ Closed</span>';
+
+  const changed = files.length;
+  const additions = files.reduce((a, f) => a + f.additions, 0);
+  const deletions = files.reduce((a, f) => a + f.deletions, 0);
+  const fileList = files.slice(0, 5).map(f => `<code>${escHtml(f.filename)}</code>`).join(', ')
+    + (files.length > 5 ? ` <span style="color:var(--text3);">+${files.length - 5} more</span>` : '');
+
+  main.innerHTML = `
+    <div class="pr-header">
+      <div class="pr-header-top">
+        <img src="${escHtml(pr.user.avatar_url)}&s=40" width="40" height="40" style="border-radius:50%;border:1px solid var(--border);" alt="">
+        <div class="pr-header-body">
+          <div class="pr-badges">${stateBadge}</div>
+          <div class="pr-title">${escHtml(pr.title)} <span>#${pr.number}</span></div>
+          <div class="pr-meta-row">
+            <span>by <a href="${escHtml(pr.user.html_url)}" target="_blank">@${escHtml(pr.user.login)}</a></span>
+            <span>${timeAgo(pr.created_at)}</span>
+            <span>${changed} file${changed !== 1 ? 's' : ''} changed</span>
+            <span class="diff-stat"><span class="diff-add">+${additions}</span>&nbsp;<span class="diff-del">−${deletions}</span></span>
+          </div>
+          <div style="margin-top:8px;font-size:12px;color:var(--text2);">${fileList}</div>
+        </div>
+      </div>
+      ${pr.body ? `<div style="margin-top:12px;padding:12px;background:var(--bg2);border-radius:var(--radius);font-size:13px;color:var(--text2);line-height:1.6;border:1px solid var(--border2);">${escHtml(pr.body.slice(0, 400))}${pr.body.length > 400 ? '…' : ''}</div>` : ''}
+      <div class="review-action">
+        <button class="btn btn-blue" id="run-review-btn" onclick="runReview()">
+          ✦ Run AI review
+        </button>
+        <a href="${escHtml(pr.html_url)}" target="_blank" class="btn btn-default">View on GitHub ↗</a>
+        <span style="font-size:12px;color:var(--text3);margin-left:4px;">Analyzes all changed files with Claude</span>
+      </div>
+    </div>
+    <div id="review-output"></div>
+  `;
+}
+
+async function runReview() {
+  if (!currentPR) return;
+  const btn = document.getElementById('run-review-btn');
+  btn.disabled = true; btn.textContent = '⏳ Reviewing…';
+  setStatus('Reviewing…');
+
+  const output = document.getElementById('review-output');
+  output.innerHTML = renderProgress(['Fetching diff', 'Preparing context', 'Running AI analysis', 'Parsing findings']);
+
+  await tick();
+
+  try {
+    // Fetch full patch for each file
+    stepDone(0); stepActive(1);
+    const files = currentPR.files;
+    const diffContext = files.map(f => {
+      const patch = f.patch ? f.patch.slice(0, 3000) : '(binary or no diff)';
+      return `### File: ${f.filename} (+${f.additions} -${f.deletions})\n\`\`\`diff\n${patch}\n\`\`\``;
+    }).join('\n\n');
+
+    stepDone(1); stepActive(2);
+    streamLog(`Sending ${files.length} files to Claude…\n`);
+
+    const prompt = buildPrompt(currentPR, diffContext);
+    const findings = await callClaude(prompt);
+
+    stepDone(2); stepActive(3);
+    const parsed = parseFindings(findings);
+    stepDone(3);
+
+    await tick(400);
+    renderFindings(parsed, findings);
+    btn.disabled = false; btn.textContent = '↺ Re-run review';
+    setStatus('Review complete');
+    showToast(`Found ${parsed.length} issue${parsed.length !== 1 ? 's' : ''}`, parsed.some(f => f.severity === 'critical') ? 'error' : 'success');
+
+  } catch(e) {
+    output.innerHTML = `<div class="error-box"><strong>Error:</strong> ${escHtml(e.message)}</div>`;
+    btn.disabled = false; btn.textContent = '✦ Run AI review';
+    setStatus('Error');
+  }
+}
+
+function buildPrompt(pr, diff) {
+  return `You are a senior software engineer performing a thorough code review. Review the following pull request diff and identify real issues.
+
+PR Title: ${pr.title}
+PR Description: ${pr.body || 'None provided'}
+Repository: ${currentRepo}
+
+DIFF:
+${diff}
+
+Identify up to 8 of the most important issues. For each issue respond EXACTLY in this format (use ### to separate issues):
+
+###
+SEVERITY: critical|high|medium|low
+CATEGORY: security|performance|bug|code-quality|testing|documentation
+FILE: filename.ext
+LINE: line number or range (e.g. 34 or 34-41)
+TITLE: Short title (max 10 words)
+DESCRIPTION: 2-3 sentence explanation of the problem and why it matters.
+FIX_BEFORE: exact problematic code snippet (2-5 lines max)
+FIX_AFTER: corrected code snippet (2-5 lines max)
+###
+
+Only include real issues visible in the diff. Do not invent issues. If the PR looks clean, say so with a single low-severity "looks good" finding. Focus on bugs, security holes, performance problems, and maintainability issues.`;
+}
+
+async function callClaude(prompt) {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': ANT_KEY,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true'
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 4000,
+      messages: [{ role: 'user', content: prompt }]
+    })
+  });
+
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error?.message || `Anthropic API error ${res.status}`);
+  }
+  const data = await res.json();
+  const text = data.content?.map(b => b.text || '').join('') || '';
+  streamLog(text.slice(0, 200) + '…\n');
+  return text;
+}
+
+function parseFindings(text) {
+  const blocks = text.split('###').filter(b => b.trim());
+  return blocks.map(block => {
+    const get = (key) => {
+      const m = block.match(new RegExp(`${key}:\\s*(.+?)(?=\\n[A-Z_]+:|$)`, 's'));
+      return m ? m[1].trim() : '';
+    };
+    const before = get('FIX_BEFORE').replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '');
+    const after = get('FIX_AFTER').replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '');
+    return {
+      severity: get('SEVERITY') || 'low',
+      category: get('CATEGORY') || 'code-quality',
+      file: get('FILE'),
+      line: get('LINE'),
+      title: get('TITLE'),
+      description: get('DESCRIPTION'),
+      before, after
+    };
+  }).filter(f => f.title);
+}
+
+function renderFindings(findings, rawText) {
+  const output = document.getElementById('review-output');
+  if (!findings.length) {
+    output.innerHTML = `<div class="card"><div class="card-body" style="color:var(--text2);font-size:13px;">No structured findings parsed. <details><summary>Raw output</summary><pre style="font-size:11px;white-space:pre-wrap;">${escHtml(rawText)}</pre></details></div></div>`;
+    return;
+  }
+
+  const counts = { critical: 0, high: 0, medium: 0, low: 0 };
+  findings.forEach(f => { counts[f.severity] = (counts[f.severity] || 0) + 1; });
+
+  const pills = [
+    counts.critical ? `<span class="count-pill red">${counts.critical} critical</span>` : '',
+    counts.high ? `<span class="count-pill orange">${counts.high} high</span>` : '',
+    counts.medium ? `<span class="count-pill blue">${counts.medium} medium</span>` : '',
+    counts.low ? `<span class="count-pill">${counts.low} low</span>` : '',
+  ].filter(Boolean).join('');
+
+  const sevOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+  findings.sort((a, b) => (sevOrder[a.severity] || 3) - (sevOrder[b.severity] || 3));
+
+  const findingHtml = findings.map((f, i) => {
+    const iconMap = { critical: '!', high: '⚠', medium: 'i', low: '·' };
+    const clsMap = { critical: 'sev-critical', high: 'sev-high', medium: 'sev-medium', low: 'sev-low' };
+    const before = f.before ? `
+      <div class="code-diff">
+        <div class="code-diff-header">${escHtml(f.file)} · line ${escHtml(f.line)}</div>
+        ${f.before.split('\n').map((l, i) => `<div class="code-line code-del"><span class="code-line-num">${i+1}</span><span class="code-line-content">- ${escHtml(l)}</span></div>`).join('')}
+        ${f.after.split('\n').map((l, i) => `<div class="code-line code-add"><span class="code-line-num"> </span><span class="code-line-content">+ ${escHtml(l)}</span></div>`).join('')}
+      </div>` : '';
+    return `
+      <div class="finding" id="finding-${i}">
+        <div class="finding-header" onclick="toggleFinding(${i})">
+          <div class="sev-icon ${clsMap[f.severity] || 'sev-low'}">${iconMap[f.severity] || '·'}</div>
+          <div class="finding-info">
+            <div class="finding-title-row">
+              <span class="finding-title">${escHtml(f.title)}</span>
+              <span class="finding-category">${escHtml(f.category)}</span>
+            </div>
+            <div class="finding-loc">${escHtml(f.file)}${f.line ? ` · line ${escHtml(f.line)}` : ''}</div>
+          </div>
+          <span class="finding-chevron">▼</span>
+        </div>
+        <div class="finding-body">
+          <div class="finding-desc">${escHtml(f.description)}</div>
+          ${before}
+          <div class="finding-actions">
+            <button class="btn btn-default btn-sm" onclick="postComment(${i})">Post to GitHub PR</button>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+
+  const reviewComment = buildReviewComment(findings);
+
+  output.innerHTML = `
+    <div class="findings-header">
+      <span class="findings-title">Review findings</span>
+      ${pills}
+    </div>
+    ${findingHtml}
+    <div class="post-section" style="margin-top:16px;">
+      <div class="post-header">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        <span class="post-title">Post full review to GitHub</span>
+      </div>
+      <div class="post-preview" id="review-preview">${escHtml(reviewComment)}</div>
+      <div class="post-actions">
+        <button class="btn btn-primary" onclick="postFullReview('COMMENT')">Post as comment</button>
+        <button class="btn btn-danger" onclick="postFullReview('REQUEST_CHANGES')">Request changes</button>
+        <button class="btn btn-default" onclick="postFullReview('APPROVE')">Approve</button>
+      </div>
+    </div>
+  `;
+
+  findings.forEach((_, i) => {
+    if (i === 0) document.getElementById(`finding-0`)?.classList.add('open');
+  });
+
+  window._findings = findings;
+  window._reviewComment = reviewComment;
+}
+
+function buildReviewComment(findings) {
+  const sevEmoji = { critical: '🔴', high: '🟠', medium: '🟡', low: '🔵' };
+  const lines = ['## ReviewAI — Automated Code Review\n'];
+  const counts = {};
+  findings.forEach(f => counts[f.severity] = (counts[f.severity] || 0) + 1);
+  lines.push('**Summary:** ' + Object.entries(counts).map(([k,v]) => `${sevEmoji[k] || ''} ${v} ${k}`).join(' · ') + '\n');
+  findings.forEach((f, i) => {
+    lines.push(`### ${i+1}. ${sevEmoji[f.severity] || ''} [${f.severity.toUpperCase()}] ${f.title}`);
+    lines.push(`**File:** \`${f.file}\`${f.line ? ` · line ${f.line}` : ''} · **Category:** ${f.category}\n`);
+    lines.push(f.description + '\n');
+    if (f.before) {
+      lines.push('```diff\n' + f.before.split('\n').map(l => '- ' + l).join('\n') + '\n' + f.after.split('\n').map(l => '+ ' + l).join('\n') + '\n```\n');
+    }
+  });
+  lines.push('---\n*Generated by [ReviewAI](https://github.com) · Powered by Claude*');
+  return lines.join('\n');
+}
+
+async function postComment(idx) {
+  const f = window._findings[idx];
+  if (!f || !currentPR) return;
+  const body = `**[${f.severity.toUpperCase()}] ${f.title}**\n\n${f.description}\n\n${f.before ? '```diff\n' + f.before.split('\n').map(l=>'- '+l).join('\n') + '\n' + f.after.split('\n').map(l=>'+ '+l).join('\n') + '\n```' : ''}\n\n*Posted by ReviewAI*`;
+  await postToGitHub('comment', body);
+}
+
+async function postFullReview(event) {
+  if (!currentPR || !window._reviewComment) return;
+  await postToGitHub('review', window._reviewComment, event);
+}
+
+async function postToGitHub(type, body, event = 'COMMENT') {
+  try {
+    let url, payload;
+    if (type === 'comment') {
+      url = `https://api.github.com/repos/${currentRepo}/issues/${currentPR.number}/comments`;
+      payload = { body };
+    } else {
+      url = `https://api.github.com/repos/${currentRepo}/pulls/${currentPR.number}/reviews`;
+      payload = { body, event };
+    }
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { ...ghHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+    showToast('Posted to GitHub ✓', 'success');
+  } catch(e) {
+    showToast(`Failed: ${e.message}`, 'error');
+  }
+}
+
+function toggleFinding(i) {
+  document.getElementById(`finding-${i}`)?.classList.toggle('open');
+}
+
+function renderProgress(steps) {
+  return `<div class="progress-card">
+    <div class="progress-title"><div class="spinner"></div> Analyzing pull request…</div>
+    <div class="progress-steps" id="progress-steps">
+      ${steps.map((s, i) => `<div class="step ${i===0?'active':'pending'}" id="step-${i}">
+        <div class="step-icon">${i+1}</div>
+        <span class="step-label">${s}</span>
+      </div>`).join('')}
+    </div>
+    <div class="stream-output" id="stream-log">Initializing…\n</div>
+  </div>`;
+}
+
+function stepDone(i) {
+  const el = document.getElementById(`step-${i}`);
+  if (!el) return;
+  el.className = 'step done';
+  el.querySelector('.step-icon').textContent = '✓';
+}
+function stepActive(i) {
+  const el = document.getElementById(`step-${i}`);
+  if (!el) return;
+  el.className = 'step active';
+}
+function streamLog(msg) {
+  const el = document.getElementById('stream-log');
+  if (!el) return;
+  el.textContent += msg;
+  el.scrollTop = el.scrollHeight;
+}
+
+function ghHeaders() {
+  return { Authorization: `Bearer ${GH_TOKEN}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
+}
+
+function escHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function timeAgo(iso) {
+  const diff = (Date.now() - new Date(iso)) / 1000;
+  if (diff < 60) return `${Math.round(diff)}s ago`;
+  if (diff < 3600) return `${Math.round(diff/60)}m ago`;
+  if (diff < 86400) return `${Math.round(diff/3600)}h ago`;
+  return `${Math.round(diff/86400)}d ago`;
+}
+
+function tick(ms = 80) { return new Promise(r => setTimeout(r, ms)); }
+</script>
+</body>
+</html>
